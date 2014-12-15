@@ -2,6 +2,7 @@ from __future__ import absolute_import, division
 
 import contextlib
 import io
+import logging
 import os
 import urllib
 
@@ -80,13 +81,13 @@ class Queue(Module):
     _output_ports = [('queue', '(org.vistrails.extra.tej:Queue)')]
 
     def compute(self):
-        destination = self.get_input('hostname')
+        destination_str = self.get_input('hostname')
         if self.has_input('username') or self.has_input('port'):
-            destination = {'hostname': destination,
+            destination = {'hostname': destination_str,
                            'username': self.get_input('username'),
                            'port': self.get_input('port')}
+            destination_str = tej.destination_as_string(destination)
 
-        destination_str = tej.destination_as_string(destination)
         queue = self.get_input('queue')
         self.set_output('queue', QueueCache.get(destination_str, queue))
 
@@ -340,6 +341,42 @@ class DownloadDirectory(Module):
                            recursive=True)
 
         self.set_output('directory', PathObject(target))
+
+
+_tej_log_handler = None
+
+
+class _VisTrailsTejLogHandler(logging.Handler):
+    def emit(self, record):
+        msg = "tej: %s" % self.format(record)
+        if record.levelno >= logging.CRITICAL:
+            debug.critical(msg)
+        elif record.levelno >= logging.WARNING:
+            debug.warning(msg)
+        elif record.levelno >= logging.INFO:
+            debug.log(msg)
+        else:
+            debug.debug(msg)
+
+
+def initialize():
+    # Route tej log messages to VisTrails
+    global _tej_log_handler
+    _tej_log_handler = _VisTrailsTejLogHandler()
+    tej_logger = logging.getLogger('tej')
+    tej_logger.propagate = False
+    tej_logger.addHandler(_tej_log_handler)
+    tej_logger.setLevel(logging.DEBUG)
+
+
+def finalize():
+    # Unregister logging handler; useful for reloading support
+    global _tej_log_handler
+    tej_logger = logging.getLogger('tej')
+    if _tej_log_handler is not None:
+        tej_logger.removeHandler(_tej_log_handler)
+        _tej_log_handler = None
+    tej_logger.propagate = True
 
 
 _modules = [Queue,
