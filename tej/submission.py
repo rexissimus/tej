@@ -246,11 +246,13 @@ class RemoteQueue(object):
             return self._ssh
         else:
             try:
-                self._ssh.get_transport().open_session()
+                chan = self._ssh.get_transport().open_session()
             except (socket.error, paramiko.SSHException):
                 logger.warning("Lost connection, reconnecting...")
                 self._ssh.close()
                 self._connect()
+            else:
+                chan.close()
             return self._ssh
 
     def _call(self, cmd, get_output):
@@ -267,17 +269,22 @@ class RemoteQueue(object):
                          cmd, " (stdout)" if get_output else "")
             chan.exec_command('/bin/sh -c %s' % shell_escape(cmd))
             output = b''
-            while not chan.exit_status_ready():
+            while True:
                 r, w, e = select.select([chan], [], [])
-                if chan in r:
-                    if chan.recv_stderr_ready():
-                        data = chan.recv_stderr(1024)
-                        if data:
-                            server_err.append(data)
-                    if chan.recv_ready():
-                        data = chan.recv(1024)
-                        if get_output:
-                            output += data
+                if chan not in r:
+                    continue
+                recvd = False
+                while chan.recv_stderr_ready():
+                    data = chan.recv_stderr(1024)
+                    server_err.append(data)
+                    recvd = True
+                while chan.recv_ready():
+                    data = chan.recv(1024)
+                    if get_output:
+                        output += data
+                    recvd = True
+                if not recvd and chan.exit_status_ready():
+                    break
             output = output.rstrip(b'\r\n')
             return chan.recv_exit_status(), output
         finally:
